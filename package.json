@@ -1,0 +1,13 @@
+{
+  "name": "ha-component-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "HACS integration backend for HA Component Library.",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "release": "node scripts/release.mjs --publish",
+    "release:prepare": "node scripts/release.mjs",
+    "release:dry-run": "node scripts/release.mjs --dry-run"
+  }
+}

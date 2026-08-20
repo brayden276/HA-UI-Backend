@@ -22,3 +22,15 @@ The dashboard library detects `sensor.ha_component_backend` automatically once i
 - `ha_component_backend.remove_room`
 
 Each room is stored under a stable `room_id` in Home Assistant storage. Future backend features belong inside this one integration, without another HACS installation.
+
+## Release
+
+This is a Home Assistant Python integration, so there is no JavaScript bundle to build. The release workflow validates the HACS contract, validates Python syntax, updates both version files, commits, tags and pushes a GitHub release tag for HACS.
+
+```powershell
+npm run check
+npm run release:dry-run
+npm run release
+```
+
+`npm run release` publishes the next patch version. Use `npm run release:prepare -- minor` or `npm run release:prepare -- major` to prepare a larger version without publishing it. The release command requires a clean working tree and GitHub push credentials.
