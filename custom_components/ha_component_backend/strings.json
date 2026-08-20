@@ -1,0 +1,13 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "HA Component Backend is already configured."
+    },
+    "step": {
+      "user": {
+        "title": "HA Component Backend",
+        "description": "Create the shared backend for Split System Components."
+      }
+    }
+  }
+}

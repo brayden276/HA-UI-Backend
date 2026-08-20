@@ -1,0 +1,190 @@
+configure_room:
+  name: Configure room
+  description: Creates or replaces the durable registry record for one split-system room.
+  fields:
+    room_id:
+      required: true
+      selector:
+        text:
+    climate:
+      required: true
+      selector:
+        entity:
+          domain: climate
+    controller:
+      required: true
+      selector:
+        entity:
+          domain: binary_sensor
+    vertical_vane:
+      selector:
+        entity:
+          domain: select
+    horizontal_vane:
+      selector:
+        entity:
+          domain: select
+    minimum_target:
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.5
+          unit_of_measurement: "°C"
+    maximum_target:
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.5
+          unit_of_measurement: "°C"
+    fan_ceiling:
+      selector:
+        select:
+          options:
+            - Quiet
+            - Low
+            - Medium
+            - High
+            - Unrestricted
+    last_mode:
+      selector:
+        text:
+    deadline:
+      selector:
+        datetime:
+    profiles:
+      selector:
+        object:
+
+remove_room:
+  name: Remove room
+  description: Removes one room record, including its saved profiles and deadline.
+  fields:
+    room_id:
+      required: true
+      selector:
+        text:
+
+update_room:
+  name: Update room
+  description: Updates a room's target-temperature limits and fan ceiling.
+  fields:
+    room_id:
+      required: true
+      selector:
+        text:
+    climate:
+      selector:
+        entity:
+          domain: climate
+    controller:
+      selector:
+        entity:
+          domain: binary_sensor
+    vertical_vane:
+      selector:
+        entity:
+          domain: select
+    horizontal_vane:
+      selector:
+        entity:
+          domain: select
+    minimum_target:
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.5
+          unit_of_measurement: "°C"
+    maximum_target:
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.5
+          unit_of_measurement: "°C"
+    fan_ceiling:
+      selector:
+        select:
+          options:
+            - Quiet
+            - Low
+            - Medium
+            - High
+            - Unrestricted
+    last_mode:
+      selector:
+        text:
+    deadline:
+      selector:
+        datetime:
+    profiles:
+      selector:
+        object:
+
+set_timer:
+  name: Set timer
+  description: Starts, extends or cancels the persistent split-system switch-off deadline.
+  fields:
+    room_id:
+      required: true
+      selector:
+        text:
+    operation:
+      required: true
+      selector:
+        select:
+          options:
+            - set
+            - extend
+            - cancel
+    minutes:
+      selector:
+        number:
+          min: 1
+          max: 720
+          mode: box
+
+resume_room:
+  name: Resume room
+  description: Restores the room's last confirmed non-off HVAC mode.
+  fields:
+    room_id:
+      required: true
+      selector:
+        text:
+
+upsert_profile:
+  name: Save profile
+  description: Creates or updates a named saved profile by stable profile ID.
+  fields:
+    room_id:
+      required: true
+      selector:
+        text:
+    profile:
+      required: true
+      selector:
+        object:
+
+remove_profile:
+  name: Delete profile
+  description: Deletes one saved profile by index, name or stable profile ID.
+  fields:
+    room_id:
+      required: true
+      selector:
+        text:
+    profile_id:
+      selector:
+        text:
+    index:
+      selector:
+        number:
+          min: 0
+          max: 4
+          mode: box
+    name:
+      selector:
+        text:

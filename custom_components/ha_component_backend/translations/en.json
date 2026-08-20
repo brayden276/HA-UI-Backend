@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HA Component Backend",
+        "description": "Create the local persistent backend used by the Split System Components.",
+        "data": {}
+      }
+    },
+    "abort": {
+      "already_configured": "HA Component Backend is already configured."
+    }
+  }
+}
