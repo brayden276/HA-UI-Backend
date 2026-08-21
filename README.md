@@ -1,11 +1,13 @@
 # HA Component Backend
 
+<img src="custom_components/ha_component_backend/brand/icon.png" alt="HA Component Backend icon" width="96">
+
 The Home Assistant backend for HA Component Library. It provides durable state and services for reusable dashboard features; the first feature is the room-keyed Split System Registry.
 
 ## Install
 
 1. In HACS, open the three-dot menu and choose **Custom repositories**.
-2. Add `https://github.com/brayden276/HA-Component-Backend` as an **Integration**.
+2. Add `https://github.com/brayden276/HA-UI-Backend` as an **Integration**.
 3. Download **HA Component Backend**, then restart Home Assistant when prompted.
 4. In **Settings > Devices & services**, choose **Add integration**, select **HA Component Backend**, and submit.
 
@@ -25,7 +27,7 @@ Each room is stored under a stable `room_id` in Home Assistant storage. Future b
 
 ## Release
 
-This is a Home Assistant Python integration, so there is no JavaScript bundle to build. The release workflow validates the HACS contract, validates Python syntax, updates both version files, commits, tags and pushes a GitHub release tag for HACS.
+This is a Home Assistant Python integration, so there is no JavaScript bundle to build. The release workflow validates the HACS contract, validates Python syntax, updates both version files, commits, tags and pushes a Git tag. HACS can install from the default branch or a published GitHub release.
 
 ```powershell
 npm run check
