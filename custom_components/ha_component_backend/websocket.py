@@ -22,11 +22,26 @@ from .const import (
     WS_PROFILE_UPDATE,
 )
 from .contracts import ContractError, PROFILE_KINDS, normalise_profile, profile_key
+from .diagnostics import log_handled_error, log_unexpected_error
 from .energy import EnergyManager
 from .split_registry import PreferenceConflict, get_registry
 
 _EXPECTED_REVISION = vol.All(vol.Coerce(int), vol.Range(min=0))
 _JSON_VALUE = vol.Any(None, bool, int, float, str, list, dict)
+
+
+def _preference_context(msg: dict[str, Any]) -> dict[str, Any]:
+    """Return safe identifiers for preference command diagnostics."""
+    return {"key": msg.get("key"), "message_id": msg.get("id")}
+
+
+def _profile_context(msg: dict[str, Any]) -> dict[str, Any]:
+    """Return safe identifiers for profile command diagnostics."""
+    return {
+        "kind": msg.get("kind"),
+        "profile_id": msg.get("profile_id"),
+        "message_id": msg.get("id"),
+    }
 
 
 @websocket_api.websocket_command(
@@ -45,6 +60,11 @@ def websocket_get_preference(
     try:
         result = get_registry(hass).preference_snapshot(msg["key"])
     except HomeAssistantError as err:
+        log_handled_error(
+            "websocket preferences/get",
+            err,
+            context=_preference_context(msg),
+        )
         connection.send_error(msg["id"], "preference_unavailable", str(err))
         return
     connection.send_result(msg["id"], result)
@@ -73,9 +93,19 @@ async def websocket_update_preference(
             Context(user_id=connection.user.id),
         )
     except PreferenceConflict as err:
+        log_handled_error(
+            "websocket preferences/update",
+            err,
+            context=_preference_context(msg),
+        )
         connection.send_error(msg["id"], "preference_conflict", str(err))
         return
     except HomeAssistantError as err:
+        log_handled_error(
+            "websocket preferences/update",
+            err,
+            context=_preference_context(msg),
+        )
         connection.send_error(msg["id"], "invalid_preference", str(err))
         return
     connection.send_result(msg["id"], result)
@@ -102,9 +132,19 @@ async def websocket_remove_preference(
             Context(user_id=connection.user.id),
         )
     except PreferenceConflict as err:
+        log_handled_error(
+            "websocket preferences/remove",
+            err,
+            context=_preference_context(msg),
+        )
         connection.send_error(msg["id"], "preference_conflict", str(err))
         return
     except HomeAssistantError as err:
+        log_handled_error(
+            "websocket preferences/remove",
+            err,
+            context=_preference_context(msg),
+        )
         connection.send_error(msg["id"], "invalid_preference", str(err))
         return
     connection.send_result(msg["id"], result)
@@ -145,6 +185,11 @@ def websocket_get_profile(
                 msg["kind"], msg["profile_id"], snapshot["value"]
             )
     except (ContractError, HomeAssistantError) as err:
+        log_handled_error(
+            "websocket profile/get",
+            err,
+            context=_profile_context(msg),
+        )
         connection.send_error(msg["id"], "profile_unavailable", str(err))
         return
     connection.send_result(
@@ -178,9 +223,19 @@ async def websocket_update_profile(
             Context(user_id=connection.user.id),
         )
     except PreferenceConflict as err:
+        log_handled_error(
+            "websocket profile/update",
+            err,
+            context=_profile_context(msg),
+        )
         connection.send_error(msg["id"], "profile_conflict", str(err))
         return
     except (ContractError, HomeAssistantError) as err:
+        log_handled_error(
+            "websocket profile/update",
+            err,
+            context=_profile_context(msg),
+        )
         connection.send_error(msg["id"], "invalid_profile", str(err))
         return
     connection.send_result(
@@ -211,9 +266,19 @@ async def websocket_remove_profile(
             Context(user_id=connection.user.id),
         )
     except PreferenceConflict as err:
+        log_handled_error(
+            "websocket profile/remove",
+            err,
+            context=_profile_context(msg),
+        )
         connection.send_error(msg["id"], "profile_conflict", str(err))
         return
     except (ContractError, HomeAssistantError) as err:
+        log_handled_error(
+            "websocket profile/remove",
+            err,
+            context=_profile_context(msg),
+        )
         connection.send_error(msg["id"], "invalid_profile", str(err))
         return
     connection.send_result(
@@ -235,8 +300,15 @@ async def websocket_energy_day(
     msg: dict[str, Any],
 ) -> None:
     """Return coalesced Energy totals and series for one local day."""
+    context = {
+        "profile_id": msg.get("profile_id"),
+        "day": msg.get("day"),
+        "message_id": msg.get("id"),
+    }
     manager = hass.data.get(DOMAIN, {}).get("energy_manager")
     if not isinstance(manager, EnergyManager):
+        error = HomeAssistantError("Energy backend is not configured")
+        log_handled_error("websocket energy/day", error, context=context)
         connection.send_error(
             msg["id"], "energy_unavailable", "Energy backend is not configured"
         )
@@ -244,9 +316,11 @@ async def websocket_energy_day(
     try:
         result = await manager.async_day(msg["profile_id"], msg["day"])
     except HomeAssistantError as err:
+        log_handled_error("websocket energy/day", err, context=context)
         connection.send_error(msg["id"], "energy_unavailable", str(err))
         return
     except Exception as err:  # recorder errors are explicit, never empty success
+        log_unexpected_error("websocket energy/day", err, context=context)
         connection.send_error(msg["id"], "energy_recorder_error", str(err))
         return
     connection.send_result(msg["id"], result)
