@@ -537,6 +537,7 @@ class SplitRegistry:
             },
             context=context,
         )
+        self._notify_listeners()
         return True
 
     @callback

@@ -56,6 +56,51 @@ Store writes are copy-on-write: the live in-memory revision is published only
 after Home Assistant confirms the Store save. A disk/write failure therefore
 cannot leave the sensor reporting state that was never persisted.
 
+## Reusable dashboard profiles
+
+Energy and Security dashboards now use validated backend profiles instead of
+embedding household entity IDs in JavaScript. Configure them through
+`ha_component_backend.configure_dashboard_profile`, or through the equivalent
+admin-only WebSocket command `ha_component_backend/profile/update`.
+
+An Energy profile has this shape:
+
+```yaml
+kind: energy
+profile_id: household-energy
+profile:
+  power:
+    grid: sensor.grid_power
+    solar:
+      - sensor.solar_inverter_1_power
+      - sensor.solar_inverter_2_power
+    house: sensor.house_consumption_power # optional; otherwise grid + solar
+  energy:
+    imported: sensor.grid_import_energy
+    exported: sensor.grid_export_energy
+    generated:
+      - sensor.solar_inverter_1_energy
+      - sensor.solar_inverter_2_energy
+    consumed: sensor.house_consumption_energy # optional; otherwise import + generation - export
+```
+
+Missing or unavailable inputs stay unavailable; they are never silently
+coerced to zero. The profile drives three canonical measurement entities:
+
+- `sensor.ha_component_house_power`
+- `sensor.ha_component_solar_power`
+- `sensor.ha_component_grid_power`
+
+`ha_component_backend/energy/day` returns one coalesced, cached response with
+current power, local-day energy totals, data coverage and the three chart
+series. Historical days cache longer than today, duplicate requests share one
+Recorder query, and a previous successful response can remain visible as stale
+data if Recorder is temporarily unavailable.
+
+Security profiles deliberately store only area scope, exclusions, viewer
+preference and exceptional entity mappings. Cameras, entry points and controls
+remain capability-discovered from Home Assistant's registries.
+
 ## Release
 
 This is a Home Assistant Python integration, so there is no JavaScript bundle to build. The release workflow validates the HACS contract, validates Python syntax, updates both version files, commits, tags and pushes a Git tag. HACS can install from the default branch or a published GitHub release.

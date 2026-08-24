@@ -14,6 +14,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import (
     DOMAIN,
+    SERVICE_CONFIGURE_DASHBOARD_PROFILE,
     SERVICE_DELETE_PROFILE,
     SERVICE_REGISTER_ROOM,
     SERVICE_REMOVE_ROOM,
@@ -21,7 +22,9 @@ from .const import (
     SERVICE_SET_SETTINGS,
     SERVICE_SET_TIMER,
     SERVICE_UPSERT_PROFILE,
+    SERVICE_REMOVE_DASHBOARD_PROFILE,
 )
+from .contracts import PROFILE_KINDS, normalise_profile, profile_key
 from .split_registry import get_registry
 
 _ROOM = vol.Schema({vol.Required("room_id"): cv.string})
@@ -72,6 +75,19 @@ _DELETE_PROFILE = _ROOM.extend(
         vol.Optional("name"): cv.string,
     }
 )
+_DASHBOARD_PROFILE = vol.Schema(
+    {
+        vol.Required("kind"): vol.In(PROFILE_KINDS),
+        vol.Required("profile_id"): cv.string,
+        vol.Required("profile"): dict,
+    }
+)
+_REMOVE_DASHBOARD_PROFILE = vol.Schema(
+    {
+        vol.Required("kind"): vol.In(PROFILE_KINDS),
+        vol.Required("profile_id"): cv.string,
+    }
+)
 
 
 async def async_register_services(hass: HomeAssistant) -> None:
@@ -107,6 +123,37 @@ async def async_register_services(hass: HomeAssistant) -> None:
     async def remove_profile(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_remove_profile(call)
         return result if call.return_response else None
+
+    async def configure_dashboard_profile(call: ServiceCall) -> ServiceResponse:
+        profile = normalise_profile(
+            call.data["kind"], call.data["profile_id"], call.data["profile"]
+        )
+        result = await get_registry(hass).async_update_preference(
+            profile_key(call.data["kind"], call.data["profile_id"]),
+            profile,
+            context=call.context,
+        )
+        response = {
+            "kind": call.data["kind"],
+            "profile_id": profile["id"],
+            "profile": profile,
+            "revision": result["revision"],
+            "changed": result["changed"],
+        }
+        return response if call.return_response else None
+
+    async def remove_dashboard_profile(call: ServiceCall) -> ServiceResponse:
+        result = await get_registry(hass).async_remove_preference(
+            profile_key(call.data["kind"], call.data["profile_id"]),
+            context=call.context,
+        )
+        response = {
+            "kind": call.data["kind"],
+            "profile_id": str(call.data["profile_id"]).strip().lower(),
+            "revision": result["revision"],
+            "changed": result["changed"],
+        }
+        return response if call.return_response else None
 
     hass.services.async_register(
         DOMAIN,
@@ -155,5 +202,19 @@ async def async_register_services(hass: HomeAssistant) -> None:
         SERVICE_DELETE_PROFILE,
         remove_profile,
         schema=_DELETE_PROFILE,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CONFIGURE_DASHBOARD_PROFILE,
+        configure_dashboard_profile,
+        schema=_DASHBOARD_PROFILE,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOVE_DASHBOARD_PROFILE,
+        remove_dashboard_profile,
+        schema=_REMOVE_DASHBOARD_PROFILE,
         supports_response=SupportsResponse.OPTIONAL,
     )
