@@ -188,3 +188,39 @@ remove_profile:
     name:
       selector:
         text:
+
+configure_dashboard_profile:
+  name: Configure dashboard profile
+  description: Validates and stores reusable Energy or Security entity mappings without creating helpers.
+  fields:
+    kind:
+      required: true
+      selector:
+        select:
+          options:
+            - energy
+            - security
+    profile_id:
+      required: true
+      selector:
+        text:
+    profile:
+      required: true
+      selector:
+        object:
+
+remove_dashboard_profile:
+  name: Remove dashboard profile
+  description: Removes a reusable Energy or Security profile while preserving Home Assistant entities.
+  fields:
+    kind:
+      required: true
+      selector:
+        select:
+          options:
+            - energy
+            - security
+    profile_id:
+      required: true
+      selector:
+        text:

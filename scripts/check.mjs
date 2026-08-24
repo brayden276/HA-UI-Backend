@@ -34,10 +34,18 @@ if (saveIndex < 0 || publishIndex < 0 || saveIndex > publishIndex) {
   fail("Store mutations must persist before publishing the new document");
 }
 if (!splitRegistry.includes("self.data = next_data")) fail("Split registry does not publish committed Store data");
-if ((services.match(/supports_response=SupportsResponse\.OPTIONAL/g) ?? []).length !== 7) {
+if ((services.match(/supports_response=SupportsResponse\.OPTIONAL/g) ?? []).length !== 9) {
   fail("Every mutation service must expose an optional acknowledged response");
 }
-for (const command of ["preferences/get", "preferences/update", "preferences/remove"]) {
+for (const command of [
+  "preferences/get",
+  "preferences/update",
+  "preferences/remove",
+  "profile/get",
+  "profile/update",
+  "profile/remove",
+  "energy/day",
+]) {
   if (!websocket.includes(command.toUpperCase().replaceAll("/", "_"))) {
     fail(`WebSocket preference command is not registered: ${command}`);
   }
@@ -46,5 +54,6 @@ for (const command of ["preferences/get", "preferences/update", "preferences/rem
 const pythonFiles = readdirSync(join(root, componentPath), { withFileTypes: true }).filter(entry => entry.isFile() && entry.name.endsWith(".py")).map(entry => join(componentPath, entry.name));
 execFileSync("python", ["-c", "from pathlib import Path; import sys; [compile(Path(path).read_text(encoding='utf-8'), path, 'exec') for path in sys.argv[1:]]", ...pythonFiles], { cwd: root, stdio: "inherit" });
 execFileSync("python", ["scripts/test_storage_contract.py"], { cwd: root, stdio: "inherit" });
+execFileSync("python", ["scripts/test_dashboard_contracts.py"], { cwd: root, stdio: "inherit" });
 
 console.log(`HACS integration check passed: ${domain} (${pythonFiles.length} Python modules)`);
