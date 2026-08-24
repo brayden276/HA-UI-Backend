@@ -13,6 +13,28 @@ class AsyncStore(Protocol):
         """Persist a complete Store document."""
 
 
+def mutate_versioned_mapping(
+    document: dict[str, Any],
+    values_key: str,
+    revisions_key: str,
+    key: str,
+    current_revision: int,
+    mutate: Callable[[dict[str, Any]], None],
+) -> None:
+    """Mutate one mapping key and retain a monotonic per-key revision."""
+    values = document[values_key]
+    before_found = key in values
+    before_value = deepcopy(values.get(key))
+    mutate(values)
+    after_found = key in values
+    after_value = values.get(key)
+    if before_found == after_found and before_value == after_value:
+        return
+    # A removed key keeps a revision tombstone. Otherwise a delete/recreate
+    # cycle could make a stale revision valid again (the ABA problem).
+    document[revisions_key][key] = current_revision + 1
+
+
 async def async_save_mutation(
     store: AsyncStore,
     current: dict[str, Any],

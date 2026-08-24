@@ -18,6 +18,7 @@ assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 async_save_mutation = MODULE.async_save_mutation
+mutate_versioned_mapping = MODULE.mutate_versioned_mapping
 
 
 class RecordingStore:
@@ -68,6 +69,44 @@ async def main() -> None:
     assert preference_data["revision"] == next_data["revision"]
     assert preference_data["preferences"] == {"theme": "compact"}
 
+    versioned = {
+        "preferences": {"theme": "compact"},
+        "preference_revisions": {"theme": 1},
+    }
+    mutate_versioned_mapping(
+        versioned,
+        "preferences",
+        "preference_revisions",
+        "theme",
+        1,
+        lambda values: values.pop("theme"),
+    )
+    assert versioned == {
+        "preferences": {},
+        "preference_revisions": {"theme": 2},
+    }
+    mutate_versioned_mapping(
+        versioned,
+        "preferences",
+        "preference_revisions",
+        "theme",
+        2,
+        lambda values: values.update(theme="spacious"),
+    )
+    assert versioned == {
+        "preferences": {"theme": "spacious"},
+        "preference_revisions": {"theme": 3},
+    }
+    mutate_versioned_mapping(
+        versioned,
+        "preferences",
+        "preference_revisions",
+        "theme",
+        3,
+        lambda values: values.update(theme="spacious"),
+    )
+    assert versioned["preference_revisions"]["theme"] == 3
+
     failing_current = {"revision": 9, "rooms": {"garage": {"mode": "off"}}}
     failing_store = RecordingStore(fail=True)
     try:
@@ -89,4 +128,4 @@ async def main() -> None:
 
 
 asyncio.run(main())
-print("Storage contract passed: no-op, independent-revision, committed and failed writes remain atomic")
+print("Storage contract passed: no-op, independent and monotonic revisions, committed and failed writes remain atomic")

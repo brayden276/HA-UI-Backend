@@ -45,6 +45,8 @@ registry, but preference values are deliberately not exposed as sensor
 attributes. Values must be valid JSON and are limited to 64 KiB per key. Update
 and remove accept an optional per-key `expected_revision` for optimistic
 concurrency, so an unrelated room-state write cannot invalidate an open editor.
+Per-key revisions remain monotonic across removal and recreation; a deleted key
+retains only its revision tombstone, not its value.
 
 This is the intended replacement for small `input_text` JSON stores and copied
 frontend persistence helpers. It is not a general database and should not hold

@@ -26,7 +26,7 @@ from .const import (
     STORE_KEY,
     STORE_VERSION,
 )
-from .storage import async_save_mutation
+from .storage import async_save_mutation, mutate_versioned_mapping
 
 _FAN_RANK = {"quiet": 0, "low": 1, "medium": 2, "high": 3, "auto": 4}
 
@@ -510,24 +510,18 @@ class SplitRegistry:
                     f"Preference revision changed from {expected_revision} to {current_revision}"
                 )
 
-            def mutate_document(document: dict[str, Any]) -> None:
-                before_found = key in document[PREFERENCES]
-                before_value = deepcopy(document[PREFERENCES].get(key))
-                mutate(document[PREFERENCES])
-                after_found = key in document[PREFERENCES]
-                after_value = document[PREFERENCES].get(key)
-                if before_found == after_found and before_value == after_value:
-                    return
-                if after_found:
-                    document[PREFERENCE_REVISIONS][key] = current_revision + 1
-                else:
-                    document[PREFERENCE_REVISIONS].pop(key, None)
-
             next_data, changed = await async_save_mutation(
                 self._store,
                 self.data,
                 REVISION,
-                mutate_document,
+                lambda document: mutate_versioned_mapping(
+                    document,
+                    PREFERENCES,
+                    PREFERENCE_REVISIONS,
+                    key,
+                    current_revision,
+                    mutate,
+                ),
                 increment_revision=False,
             )
             if not changed:
@@ -656,13 +650,21 @@ class SplitRegistry:
         stored_preference_revisions = source.get(PREFERENCE_REVISIONS)
         if not isinstance(stored_preference_revisions, dict):
             stored_preference_revisions = {}
+        for key, revision in stored_preference_revisions.items():
+            try:
+                normalised_key = self._preference_key(key)
+                normalised_revision = max(0, int(revision or 0))
+                if normalised_revision:
+                    result[PREFERENCE_REVISIONS][normalised_key] = normalised_revision
+            except (TypeError, ValueError, HomeAssistantError):
+                continue
         for key, value in stored_preferences.items():
             try:
                 normalised_key = self._preference_key(key)
                 result[PREFERENCES][normalised_key] = self._preference_value(value)
                 result[PREFERENCE_REVISIONS][normalised_key] = max(
                     1,
-                    int(stored_preference_revisions.get(key) or 1),
+                    result[PREFERENCE_REVISIONS].get(normalised_key, 1),
                 )
             except (TypeError, ValueError, HomeAssistantError):
                 continue
