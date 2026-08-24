@@ -28,6 +28,7 @@ const splitRegistry = readFileSync(join(root, componentPath, "split_registry.py"
 const storage = readFileSync(join(root, componentPath, "storage.py"), "utf8");
 const services = readFileSync(join(root, componentPath, "services.py"), "utf8");
 const websocket = readFileSync(join(root, componentPath, "websocket.py"), "utf8");
+const diagnostics = readFileSync(join(root, componentPath, "diagnostics.py"), "utf8");
 const saveIndex = storage.indexOf("await store.async_save(next_data)");
 const publishIndex = storage.indexOf("return next_data, True");
 if (saveIndex < 0 || publishIndex < 0 || saveIndex > publishIndex) {
@@ -50,10 +51,20 @@ for (const command of [
     fail(`WebSocket preference command is not registered: ${command}`);
   }
 }
+if (!diagnostics.includes('logging.getLogger("custom_components.ha_component_backend")')) {
+  fail("Backend diagnostics must write through the central integration logger");
+}
+for (const file of ["__init__.py", "services.py", "websocket.py", "energy.py"]) {
+  const source = readFileSync(join(root, componentPath, file), "utf8");
+  if (!source.includes(".diagnostics import")) {
+    fail(`${file} must route boundary failures through central diagnostics`);
+  }
+}
 
 const pythonFiles = readdirSync(join(root, componentPath), { withFileTypes: true }).filter(entry => entry.isFile() && entry.name.endsWith(".py")).map(entry => join(componentPath, entry.name));
 execFileSync("python", ["-c", "from pathlib import Path; import sys; [compile(Path(path).read_text(encoding='utf-8'), path, 'exec') for path in sys.argv[1:]]", ...pythonFiles], { cwd: root, stdio: "inherit" });
 execFileSync("python", ["scripts/test_storage_contract.py"], { cwd: root, stdio: "inherit" });
 execFileSync("python", ["scripts/test_dashboard_contracts.py"], { cwd: root, stdio: "inherit" });
+execFileSync("python", ["scripts/test_logging_contract.py"], { cwd: root, stdio: "inherit" });
 
 console.log(`HACS integration check passed: ${domain} (${pythonFiles.length} Python modules)`);
