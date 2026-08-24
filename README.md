@@ -2,7 +2,9 @@
 
 <img src="custom_components/ha_component_backend/brand/icon.png" alt="HA Component Backend icon" width="96">
 
-The Home Assistant backend for HA Component Library. It provides durable state and services for reusable dashboard features; the first feature is the room-keyed Split System Registry.
+The Home Assistant backend for HA Component Library. It provides durable state,
+acknowledged services and reusable dashboard preferences without proliferating
+helpers, automations or per-feature integrations.
 
 ## Install
 
@@ -24,6 +26,33 @@ The dashboard library detects `sensor.ha_component_backend` automatically once i
 - `ha_component_backend.remove_room`
 
 Each room is stored under a stable `room_id` in Home Assistant storage. Future backend features belong inside this one integration, without another HACS installation.
+
+All mutation services support an optional Home Assistant response containing the
+committed revision, whether stored state changed and the resulting room record.
+Callers that do not request response data remain backwards compatible.
+
+## Dashboard preference API
+
+The frontend can store compact shared preferences through three authenticated
+WebSocket commands:
+
+- `ha_component_backend/preferences/get`
+- `ha_component_backend/preferences/update`
+- `ha_component_backend/preferences/remove`
+
+Each key is stored in the same atomic Home Assistant Store document as the room
+registry, but preference values are deliberately not exposed as sensor
+attributes. Values must be valid JSON and are limited to 64 KiB per key. Update
+and remove accept an optional per-key `expected_revision` for optimistic
+concurrency, so an unrelated room-state write cannot invalidate an open editor.
+
+This is the intended replacement for small `input_text` JSON stores and copied
+frontend persistence helpers. It is not a general database and should not hold
+entity history, secrets or large media payloads.
+
+Store writes are copy-on-write: the live in-memory revision is published only
+after Home Assistant confirms the Store save. A disk/write failure therefore
+cannot leave the sensor reporting state that was never persisted.
 
 ## Release
 

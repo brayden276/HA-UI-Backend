@@ -15,5 +15,12 @@ SERVICE_UPSERT_PROFILE = "upsert_profile"
 SERVICE_DELETE_PROFILE = "remove_profile"
 
 ROOMS = "rooms"
+PREFERENCES = "preferences"
+PREFERENCE_REVISIONS = "preference_revisions"
 REVISION = "revision"
+EVENT_PREFERENCES_UPDATED = f"{DOMAIN}_preferences_updated"
+WS_PREFERENCES_GET = f"{DOMAIN}/preferences/get"
+WS_PREFERENCES_UPDATE = f"{DOMAIN}/preferences/update"
+WS_PREFERENCES_REMOVE = f"{DOMAIN}/preferences/remove"
+MAX_PREFERENCE_BYTES = 65_536
 FAN_CEILINGS = {"quiet": "Quiet", "low": "Low", "medium": "Medium", "high": "High", "unrestricted": "Unrestricted"}

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import voluptuous as vol
 
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
@@ -75,51 +80,80 @@ async def async_register_services(hass: HomeAssistant) -> None:
         return
     hass.data[DOMAIN]["services"] = True
 
-    async def configure_room(call: ServiceCall) -> None:
-        await get_registry(hass).async_configure_room(call)
+    async def configure_room(call: ServiceCall) -> ServiceResponse:
+        result = await get_registry(hass).async_configure_room(call)
+        return result if call.return_response else None
 
-    async def remove_room(call: ServiceCall) -> None:
-        await get_registry(hass).async_remove_room(call)
+    async def remove_room(call: ServiceCall) -> ServiceResponse:
+        result = await get_registry(hass).async_remove_room(call)
+        return result if call.return_response else None
 
-    async def update_room(call: ServiceCall) -> None:
-        await get_registry(hass).async_update_room(call)
+    async def update_room(call: ServiceCall) -> ServiceResponse:
+        result = await get_registry(hass).async_update_room(call)
+        return result if call.return_response else None
 
-    async def set_timer(call: ServiceCall) -> None:
-        await get_registry(hass).async_set_timer(call)
+    async def set_timer(call: ServiceCall) -> ServiceResponse:
+        result = await get_registry(hass).async_set_timer(call)
+        return result if call.return_response else None
 
-    async def resume_room(call: ServiceCall) -> None:
-        await get_registry(hass).async_resume_room(call)
+    async def resume_room(call: ServiceCall) -> ServiceResponse:
+        result = await get_registry(hass).async_resume_room(call)
+        return result if call.return_response else None
 
-    async def upsert_profile(call: ServiceCall) -> None:
-        await get_registry(hass).async_upsert_profile(call)
+    async def upsert_profile(call: ServiceCall) -> ServiceResponse:
+        result = await get_registry(hass).async_upsert_profile(call)
+        return result if call.return_response else None
 
-    async def remove_profile(call: ServiceCall) -> None:
-        await get_registry(hass).async_remove_profile(call)
+    async def remove_profile(call: ServiceCall) -> ServiceResponse:
+        result = await get_registry(hass).async_remove_profile(call)
+        return result if call.return_response else None
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_REGISTER_ROOM,
         configure_room,
         schema=_REGISTER,
+        supports_response=SupportsResponse.OPTIONAL,
     )
-    hass.services.async_register(DOMAIN, SERVICE_REMOVE_ROOM, remove_room, schema=_ROOM)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOVE_ROOM,
+        remove_room,
+        schema=_ROOM,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     hass.services.async_register(
         DOMAIN,
         SERVICE_SET_SETTINGS,
         update_room,
         schema=_SETTINGS,
+        supports_response=SupportsResponse.OPTIONAL,
     )
-    hass.services.async_register(DOMAIN, SERVICE_SET_TIMER, set_timer, schema=_TIMER)
-    hass.services.async_register(DOMAIN, SERVICE_RESUME_ROOM, resume_room, schema=_ROOM)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_TIMER,
+        set_timer,
+        schema=_TIMER,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESUME_ROOM,
+        resume_room,
+        schema=_ROOM,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     hass.services.async_register(
         DOMAIN,
         SERVICE_UPSERT_PROFILE,
         upsert_profile,
         schema=_PROFILE,
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_DELETE_PROFILE,
         remove_profile,
         schema=_DELETE_PROFILE,
+        supports_response=SupportsResponse.OPTIONAL,
     )

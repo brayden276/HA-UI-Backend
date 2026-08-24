@@ -5,73 +5,34 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from datetime import timedelta
+import json
 from typing import Any, Callable
 
-import voluptuous as vol
-
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
+from homeassistant.core import Context, Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
+    EVENT_PREFERENCES_UPDATED,
     FAN_CEILINGS,
-    PLATFORMS,
+    MAX_PREFERENCE_BYTES,
+    PREFERENCES,
+    PREFERENCE_REVISIONS,
     REVISION,
     ROOMS,
-    SERVICE_DELETE_PROFILE,
-    SERVICE_REGISTER_ROOM,
-    SERVICE_REMOVE_ROOM,
-    SERVICE_RESUME_ROOM,
-    SERVICE_SET_SETTINGS,
-    SERVICE_SET_TIMER,
-    SERVICE_UPSERT_PROFILE,
     STORE_KEY,
     STORE_VERSION,
 )
+from .storage import async_save_mutation
 
 _FAN_RANK = {"quiet": 0, "low": 1, "medium": 2, "high": 3, "auto": 4}
-_ROOM = vol.Schema({vol.Required("room_id"): cv.string})
-_REGISTER = _ROOM.extend(
-    {
-        vol.Required("climate"): cv.entity_id,
-        vol.Required("controller"): cv.entity_id,
-        vol.Optional("vertical_vane"): cv.entity_id,
-        vol.Optional("horizontal_vane"): cv.entity_id,
-        vol.Optional("minimum_target", default=16): vol.Coerce(float),
-        vol.Optional("maximum_target", default=31): vol.Coerce(float),
-        vol.Optional("fan_ceiling", default="Quiet"): cv.string,
-        vol.Optional("last_mode"): cv.string,
-        vol.Optional("deadline"): cv.string,
-        vol.Optional("profiles", default=[]): list,
-    }
-)
-_SETTINGS = _ROOM.extend(
-    {
-        vol.Optional("climate"): cv.entity_id,
-        vol.Optional("controller"): cv.entity_id,
-        vol.Optional("vertical_vane"): cv.entity_id,
-        vol.Optional("horizontal_vane"): cv.entity_id,
-        vol.Optional("minimum_target"): vol.Coerce(float),
-        vol.Optional("maximum_target"): vol.Coerce(float),
-        vol.Optional("fan_ceiling"): cv.string,
-        vol.Optional("last_mode"): cv.string,
-        vol.Optional("deadline"): cv.string,
-        vol.Optional("profiles"): list,
-    }
-)
-_TIMER = _ROOM.extend(
-    {
-        vol.Required("operation"): vol.In({"set", "extend", "cancel"}),
-        vol.Optional("minutes", default=60): vol.All(vol.Coerce(int), vol.Range(min=0, max=720)),
-    }
-)
-_PROFILE = _ROOM.extend({vol.Required("profile"): dict, vol.Optional("index"): vol.Coerce(int)})
-_DELETE_PROFILE = _ROOM.extend({vol.Optional("profile_id"): cv.string, vol.Optional("index"): vol.Coerce(int), vol.Optional("name"): cv.string})
+
+
+class PreferenceConflict(HomeAssistantError):
+    """Raised when a client writes against an obsolete store revision."""
 
 
 class SplitRegistry:
@@ -80,7 +41,12 @@ class SplitRegistry:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self._store = Store(hass, STORE_VERSION, STORE_KEY)
-        self.data: dict[str, Any] = {REVISION: 0, ROOMS: {}}
+        self.data: dict[str, Any] = {
+            REVISION: 0,
+            ROOMS: {},
+            PREFERENCES: {},
+            PREFERENCE_REVISIONS: {},
+        }
         self._lock = asyncio.Lock()
         self._listeners: list[Callable[[], None]] = []
         self._deadline_unsub: dict[str, Callable[[], None]] = {}
@@ -118,6 +84,61 @@ class SplitRegistry:
 
         return remove
 
+    def preference_snapshot(self, key: str) -> dict[str, Any]:
+        """Return one preference value without exposing all preferences in state."""
+        key = self._preference_key(key)
+        found = key in self.data[PREFERENCES]
+        return {
+            "key": key,
+            "found": found,
+            "value": deepcopy(self.data[PREFERENCES].get(key)),
+            REVISION: self.data[PREFERENCE_REVISIONS].get(key, 0),
+        }
+
+    async def async_update_preference(
+        self,
+        key: str,
+        value: Any,
+        expected_revision: int | None = None,
+        context: Context | None = None,
+    ) -> dict[str, Any]:
+        """Persist one bounded JSON preference with optimistic concurrency."""
+        key = self._preference_key(key)
+        value = self._preference_value(value)
+
+        def mutate(preferences: dict[str, Any]) -> None:
+            preferences[key] = value
+
+        changed = await self._mutate_preference(
+            key,
+            mutate,
+            expected_revision,
+            removed=False,
+            context=context,
+        )
+        return {**self.preference_snapshot(key), "changed": changed}
+
+    async def async_remove_preference(
+        self,
+        key: str,
+        expected_revision: int | None = None,
+        context: Context | None = None,
+    ) -> dict[str, Any]:
+        """Remove one preference while preserving unrelated stored data."""
+        key = self._preference_key(key)
+
+        def mutate(preferences: dict[str, Any]) -> None:
+            preferences.pop(key, None)
+
+        changed = await self._mutate_preference(
+            key,
+            mutate,
+            expected_revision,
+            removed=True,
+            context=context,
+        )
+        return {**self.preference_snapshot(key), "changed": changed}
+
     def room_id_for_climate(self, entity_id: str) -> str | None:
         """Look up a stable room key from its climate entity."""
         return next(
@@ -125,7 +146,7 @@ class SplitRegistry:
             None,
         )
 
-    async def async_configure_room(self, call: ServiceCall) -> None:
+    async def async_configure_room(self, call: ServiceCall) -> dict[str, Any]:
         """Create or update one room record."""
         room_id = self._room_id(call.data["room_id"])
         climate = call.data["climate"]
@@ -160,11 +181,12 @@ class SplitRegistry:
             )
             rooms[room_id] = room
 
-        await self._mutate(mutate)
+        changed = await self._mutate(mutate)
         self._schedule_deadline(room_id)
-        await self.async_enforce(room_id)
+        enforcement = await self._enforce_after_commit(room_id, call.context)
+        return self._room_result(room_id, changed, enforcement=enforcement)
 
-    async def async_remove_room(self, call: ServiceCall) -> None:
+    async def async_remove_room(self, call: ServiceCall) -> dict[str, Any]:
         """Remove one room and every stored profile."""
         room_id = self._room_id(call.data["room_id"])
 
@@ -172,10 +194,11 @@ class SplitRegistry:
             self._require(rooms, room_id)
             rooms.pop(room_id)
 
-        await self._mutate(mutate)
+        changed = await self._mutate(mutate)
         self._cancel_deadline(room_id)
+        return self._room_result(room_id, changed, removed=True)
 
-    async def async_update_room(self, call: ServiceCall) -> None:
+    async def async_update_room(self, call: ServiceCall) -> dict[str, Any]:
         """Atomically replace operating policy values."""
         room_id = self._room_id(call.data["room_id"])
 
@@ -195,19 +218,22 @@ class SplitRegistry:
             if "profiles" in call.data:
                 room["profiles"] = [self._profile(profile) for profile in call.data["profiles"]]
 
-        await self._mutate(mutate)
+        changed = await self._mutate(mutate)
         self._schedule_deadline(room_id)
-        await self.async_enforce(room_id)
+        enforcement = await self._enforce_after_commit(room_id, call.context)
+        return self._room_result(room_id, changed, enforcement=enforcement)
 
-    async def async_set_timer(self, call: ServiceCall) -> None:
+    async def async_set_timer(self, call: ServiceCall) -> dict[str, Any]:
         """Set, extend or cancel a restart-safe deadline."""
-        await self._set_timer(
-            self._room_id(call.data["room_id"]),
+        room_id = self._room_id(call.data["room_id"])
+        changed = await self._set_timer(
+            room_id,
             call.data["operation"],
             call.data["minutes"],
         )
+        return self._room_result(room_id, changed)
 
-    async def async_resume_room(self, call: ServiceCall) -> None:
+    async def async_resume_room(self, call: ServiceCall) -> dict[str, Any]:
         """Restore the room's last confirmed non-off HVAC mode."""
         room_id = self._room_id(call.data["room_id"])
         room = self.data[ROOMS].get(room_id)
@@ -221,9 +247,11 @@ class SplitRegistry:
             "set_hvac_mode",
             {"entity_id": room["climate"], "hvac_mode": mode},
             blocking=True,
+            context=call.context,
         )
+        return self._room_result(room_id, False, resumed_mode=mode)
 
-    async def _set_timer(self, room_id: str, operation: str, minutes: int) -> None:
+    async def _set_timer(self, room_id: str, operation: str, minutes: int) -> bool:
         """Persist one validated timer operation without synthesising a service call."""
         if operation != "cancel" and minutes < 1:
             raise HomeAssistantError("minutes must be between 1 and 720")
@@ -241,10 +269,11 @@ class SplitRegistry:
                     base = deadline
             room["deadline"] = (base + timedelta(minutes=minutes)).isoformat()
 
-        await self._mutate(mutate)
+        changed = await self._mutate(mutate)
         self._schedule_deadline(room_id)
+        return changed
 
-    async def async_upsert_profile(self, call: ServiceCall) -> None:
+    async def async_upsert_profile(self, call: ServiceCall) -> dict[str, Any]:
         """Store a profile by stable ID with name uniqueness per room."""
         room_id = self._room_id(call.data["room_id"])
         profile = self._profile(call.data["profile"])
@@ -275,9 +304,10 @@ class SplitRegistry:
                 else:
                     profiles[existing] = profile
 
-        await self._mutate(mutate)
+        changed = await self._mutate(mutate)
+        return self._room_result(room_id, changed)
 
-    async def async_remove_profile(self, call: ServiceCall) -> None:
+    async def async_remove_profile(self, call: ServiceCall) -> dict[str, Any]:
         """Delete one profile by index, stable ID or name."""
         room_id = self._room_id(call.data["room_id"])
         profile_id = str(call.data.get("profile_id") or "").strip()
@@ -301,16 +331,22 @@ class SplitRegistry:
                 raise HomeAssistantError("Unknown split-system profile")
             room["profiles"] = profiles
 
-        await self._mutate(mutate)
+        changed = await self._mutate(mutate)
+        return self._room_result(room_id, changed)
 
-    async def async_enforce(self, room_id: str) -> None:
+    async def async_enforce(
+        self,
+        room_id: str,
+        context: Context | None = None,
+    ) -> dict[str, Any]:
         """Apply stored limits after any client changes the climate entity."""
         room = self.data[ROOMS].get(room_id)
         if not room:
-            return
+            return {"status": "skipped", "reason": "unknown_room", "corrections": []}
         state = self.hass.states.get(room["climate"])
         if state is None or state.state in {"off", "unknown", "unavailable"}:
-            return
+            return {"status": "skipped", "reason": "inactive", "corrections": []}
+        corrections: list[str] = []
         try:
             requested = float(state.attributes.get("temperature"))
         except (TypeError, ValueError):
@@ -323,7 +359,9 @@ class SplitRegistry:
                     "set_temperature",
                     {"entity_id": room["climate"], "temperature": corrected},
                     blocking=True,
+                    context=context,
                 )
+                corrections.append("temperature")
         fan = str(state.attributes.get("fan_mode") or "").lower()
         ceiling = str(room["fan_ceiling"]).lower()
         if ceiling in _FAN_RANK and fan in _FAN_RANK and _FAN_RANK[fan] > _FAN_RANK[ceiling]:
@@ -332,7 +370,27 @@ class SplitRegistry:
                 "set_fan_mode",
                 {"entity_id": room["climate"], "fan_mode": room["fan_ceiling"]},
                 blocking=True,
+                context=context,
             )
+            corrections.append("fan_mode")
+        return {
+            "status": "applied" if corrections else "not_required",
+            "corrections": corrections,
+        }
+
+    async def _enforce_after_commit(
+        self,
+        room_id: str,
+        context: Context | None,
+    ) -> dict[str, Any]:
+        """Report the rare partial outcome where persistence beats enforcement."""
+        try:
+            return await self.async_enforce(room_id, context)
+        except Exception as err:
+            raise HomeAssistantError(
+                "Room settings were saved, but the current climate state could not "
+                "be brought within the updated policy"
+            ) from err
 
     @callback
     def _on_state_changed(self, event: Event) -> None:
@@ -423,16 +481,112 @@ class SplitRegistry:
     async def _mutate(self, mutate: Callable[[dict[str, dict[str, Any]]], None]) -> bool:
         """Persist and publish only an actual state change."""
         async with self._lock:
-            next_data = deepcopy(self.data)
-            mutate(next_data[ROOMS])
-            if next_data[ROOMS] == self.data[ROOMS]:
+            next_data, changed = await async_save_mutation(
+                self._store,
+                self.data,
+                REVISION,
+                lambda document: mutate(document[ROOMS]),
+            )
+            if not changed:
                 return False
-            next_data[REVISION] = self.data[REVISION] + 1
             self.data = next_data
-            await self._store.async_save(self.data)
+        self._notify_listeners()
+        return True
+
+    async def _mutate_preference(
+        self,
+        key: str,
+        mutate: Callable[[dict[str, Any]], None],
+        expected_revision: int | None,
+        *,
+        removed: bool,
+        context: Context | None,
+    ) -> bool:
+        """Serialize, persist and publish one preference mutation."""
+        async with self._lock:
+            current_revision = self.data[PREFERENCE_REVISIONS].get(key, 0)
+            if expected_revision is not None and expected_revision != current_revision:
+                raise PreferenceConflict(
+                    f"Preference revision changed from {expected_revision} to {current_revision}"
+                )
+
+            def mutate_document(document: dict[str, Any]) -> None:
+                before_found = key in document[PREFERENCES]
+                before_value = deepcopy(document[PREFERENCES].get(key))
+                mutate(document[PREFERENCES])
+                after_found = key in document[PREFERENCES]
+                after_value = document[PREFERENCES].get(key)
+                if before_found == after_found and before_value == after_value:
+                    return
+                if after_found:
+                    document[PREFERENCE_REVISIONS][key] = current_revision + 1
+                else:
+                    document[PREFERENCE_REVISIONS].pop(key, None)
+
+            next_data, changed = await async_save_mutation(
+                self._store,
+                self.data,
+                REVISION,
+                mutate_document,
+                increment_revision=False,
+            )
+            if not changed:
+                return False
+            self.data = next_data
+        preference_revision = self.data[PREFERENCE_REVISIONS].get(key, 0)
+        self.hass.bus.async_fire(
+            EVENT_PREFERENCES_UPDATED,
+            {
+                "key": key,
+                REVISION: preference_revision,
+                "removed": removed,
+            },
+            context=context,
+        )
+        return True
+
+    @callback
+    def _notify_listeners(self) -> None:
+        """Publish a committed Store revision to local entities."""
         for listener in tuple(self._listeners):
             listener()
-        return True
+
+    def _room_result(self, room_id: str, changed: bool, **details: Any) -> dict[str, Any]:
+        """Build a stable, JSON-serialisable response for mutation services."""
+        room = self.data[ROOMS].get(room_id)
+        return {
+            "room_id": room_id,
+            "changed": changed,
+            REVISION: self.data[REVISION],
+            "room": deepcopy(room),
+            **details,
+        }
+
+    @staticmethod
+    def _preference_key(value: Any) -> str:
+        key = str(value or "").strip()
+        if not key or len(key) > 120 or any(character in key for character in "\r\n"):
+            raise HomeAssistantError(
+                "Preference key is required, must be one line and at most 120 characters"
+            )
+        return key
+
+    @staticmethod
+    def _preference_value(value: Any) -> Any:
+        try:
+            encoded = json.dumps(
+                value,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as err:
+            raise HomeAssistantError("Preference value must be valid JSON") from err
+        if len(encoded) > MAX_PREFERENCE_BYTES:
+            raise HomeAssistantError(
+                f"Preference value must not exceed {MAX_PREFERENCE_BYTES} bytes"
+            )
+        return deepcopy(value)
 
     @staticmethod
     def _room_id(value: Any) -> str:
@@ -484,11 +638,38 @@ class SplitRegistry:
         }
 
     def _normalise_store(self, source: Any) -> dict[str, Any]:
-        result = {REVISION: 0, ROOMS: {}}
+        result = {
+            REVISION: 0,
+            ROOMS: {},
+            PREFERENCES: {},
+            PREFERENCE_REVISIONS: {},
+        }
         if not isinstance(source, dict):
             return result
-        result[REVISION] = int(source.get(REVISION) or 0)
-        for room_id, room in (source.get(ROOMS) or {}).items():
+        try:
+            result[REVISION] = max(0, int(source.get(REVISION) or 0))
+        except (TypeError, ValueError):
+            result[REVISION] = 0
+        stored_preferences = source.get(PREFERENCES)
+        if not isinstance(stored_preferences, dict):
+            stored_preferences = {}
+        stored_preference_revisions = source.get(PREFERENCE_REVISIONS)
+        if not isinstance(stored_preference_revisions, dict):
+            stored_preference_revisions = {}
+        for key, value in stored_preferences.items():
+            try:
+                normalised_key = self._preference_key(key)
+                result[PREFERENCES][normalised_key] = self._preference_value(value)
+                result[PREFERENCE_REVISIONS][normalised_key] = max(
+                    1,
+                    int(stored_preference_revisions.get(key) or 1),
+                )
+            except (TypeError, ValueError, HomeAssistantError):
+                continue
+        stored_rooms = source.get(ROOMS)
+        if not isinstance(stored_rooms, dict):
+            stored_rooms = {}
+        for room_id, room in stored_rooms.items():
             if not isinstance(room, dict) or not room.get("climate"):
                 continue
             try:
@@ -523,5 +704,3 @@ def get_registry(hass: HomeAssistant) -> SplitRegistry:
     if not registries:
         raise HomeAssistantError("Split State Registry is not configured")
     return registries[0]
-
-

@@ -10,11 +10,13 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN, PLATFORMS
 from .services import async_register_services
 from .split_registry import SplitRegistry
+from .websocket import async_register_websocket_api
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Register integration services before an entry is loaded."""
     await async_register_services(hass)
+    async_register_websocket_api(hass)
     return True
 
 
