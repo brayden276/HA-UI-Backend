@@ -23,6 +23,7 @@ from .contracts import (
     profile_entity_ids,
     profile_key,
 )
+from .diagnostics import log_handled_error, log_unexpected_error
 from .split_registry import SplitRegistry
 
 
@@ -79,6 +80,11 @@ class EnergyManager:
         try:
             profile_result = self.profile_snapshot(profile_id)
         except HomeAssistantError as err:
+            log_handled_error(
+                "energy power snapshot",
+                err,
+                context={"profile_id": profile_id},
+            )
             return {
                 "profile": profile_id,
                 "revision": 0,
@@ -128,8 +134,17 @@ class EnergyManager:
             )
         try:
             result = await self._inflight[cache_key]
-        except Exception:
+        except Exception as err:
             if cached:
+                log_unexpected_error(
+                    "energy day refresh",
+                    err,
+                    context={
+                        "profile_id": profile_id,
+                        "day": day,
+                        "fallback": "stale_cache",
+                    },
+                )
                 return {**deepcopy(cached[1]), "cached": True, "stale": True}
             raise
         finally:
@@ -194,7 +209,12 @@ class EnergyManager:
         try:
             result = self.profile_snapshot()
             self._profile_entities = profile_entity_ids(result["profile"]) if result["profile"] else set()
-        except HomeAssistantError:
+        except HomeAssistantError as err:
+            log_handled_error(
+                "energy profile refresh",
+                err,
+                context={"profile_id": DEFAULT_ENERGY_PROFILE},
+            )
             self._profile_entities = set()
         self._cache.clear()
         for listener in tuple(self._listeners):

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from functools import wraps
+
 import voluptuous as vol
 
 from homeassistant.core import (
@@ -10,6 +13,7 @@ from homeassistant.core import (
     ServiceResponse,
     SupportsResponse,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
@@ -24,7 +28,8 @@ from .const import (
     SERVICE_UPSERT_PROFILE,
     SERVICE_REMOVE_DASHBOARD_PROFILE,
 )
-from .contracts import PROFILE_KINDS, normalise_profile, profile_key
+from .contracts import ContractError, PROFILE_KINDS, normalise_profile, profile_key
+from .diagnostics import log_handled_error, log_unexpected_error
 from .split_registry import get_registry
 
 _ROOM = vol.Schema({vol.Required("room_id"): cv.string})
@@ -89,6 +94,29 @@ _REMOVE_DASHBOARD_PROFILE = vol.Schema(
     }
 )
 
+ServiceHandler = Callable[[ServiceCall], Awaitable[ServiceResponse]]
+
+
+def _logged_service_handler(service_name: str) -> Callable[[ServiceHandler], ServiceHandler]:
+    """Log service failures and re-raise them unchanged for Home Assistant."""
+
+    def decorate(handler: ServiceHandler) -> ServiceHandler:
+        @wraps(handler)
+        async def wrapped(call: ServiceCall) -> ServiceResponse:
+            context = {"context_id": call.context.id, "service": service_name}
+            try:
+                return await handler(call)
+            except (ContractError, HomeAssistantError) as err:
+                log_handled_error("service request", err, context=context)
+                raise
+            except Exception as err:
+                log_unexpected_error("service request", err, context=context)
+                raise
+
+        return wrapped
+
+    return decorate
+
 
 async def async_register_services(hass: HomeAssistant) -> None:
     """Register validated services once for the backend domain."""
@@ -96,34 +124,42 @@ async def async_register_services(hass: HomeAssistant) -> None:
         return
     hass.data[DOMAIN]["services"] = True
 
+    @_logged_service_handler(SERVICE_REGISTER_ROOM)
     async def configure_room(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_configure_room(call)
         return result if call.return_response else None
 
+    @_logged_service_handler(SERVICE_REMOVE_ROOM)
     async def remove_room(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_remove_room(call)
         return result if call.return_response else None
 
+    @_logged_service_handler(SERVICE_SET_SETTINGS)
     async def update_room(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_update_room(call)
         return result if call.return_response else None
 
+    @_logged_service_handler(SERVICE_SET_TIMER)
     async def set_timer(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_set_timer(call)
         return result if call.return_response else None
 
+    @_logged_service_handler(SERVICE_RESUME_ROOM)
     async def resume_room(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_resume_room(call)
         return result if call.return_response else None
 
+    @_logged_service_handler(SERVICE_UPSERT_PROFILE)
     async def upsert_profile(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_upsert_profile(call)
         return result if call.return_response else None
 
+    @_logged_service_handler(SERVICE_DELETE_PROFILE)
     async def remove_profile(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_remove_profile(call)
         return result if call.return_response else None
 
+    @_logged_service_handler(SERVICE_CONFIGURE_DASHBOARD_PROFILE)
     async def configure_dashboard_profile(call: ServiceCall) -> ServiceResponse:
         profile = normalise_profile(
             call.data["kind"], call.data["profile_id"], call.data["profile"]
@@ -142,6 +178,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
         }
         return response if call.return_response else None
 
+    @_logged_service_handler(SERVICE_REMOVE_DASHBOARD_PROFILE)
     async def remove_dashboard_profile(call: ServiceCall) -> ServiceResponse:
         result = await get_registry(hass).async_remove_preference(
             profile_key(call.data["kind"], call.data["profile_id"]),
